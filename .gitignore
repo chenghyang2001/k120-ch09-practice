@@ -1,0 +1,11 @@
+data/
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+credentials.json
+token.json
+*.stackdump
+core
+*.core
+*.dmp
