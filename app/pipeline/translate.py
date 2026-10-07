@@ -28,6 +28,10 @@ from app.pipeline.subtitles import (
     parse_json3,
 )
 
+# 不載入使用者／專案設定與 MCP：全域 hooks（例如未 commit 就擋 Stop 的 quality-gate）會讓 claude -p 卡到逾時；
+# 不能用 --bare，它強制 ANTHROPIC_API_KEY 認證，會改扣 API Credits
+_ISOLATION_FLAGS = ("--setting-sources=", "--strict-mcp-config")
+
 # 這些都代表「claude 這次回得不能用」，一律走重試／對半切的降級流程
 _RETRYABLE = (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired)
 
@@ -100,7 +104,7 @@ def _call_claude(prompt: str) -> str:
     # 成本規則：CLI 只要看到 ANTHROPIC_API_KEY 就會改扣 API Credits，移除後才會走 Max 訂閱額度
     env.pop("ANTHROPIC_API_KEY", None)
     proc = subprocess.run(
-        [path, "-p", "--model", TRANSLATE_MODEL],
+        [path, "-p", "--model", TRANSLATE_MODEL, *_ISOLATION_FLAGS],
         input=prompt, capture_output=True, encoding="utf-8",
         timeout=TRANSLATE_TIMEOUT_SEC, env=env, check=False,
     )

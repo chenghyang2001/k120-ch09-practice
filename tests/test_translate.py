@@ -151,16 +151,16 @@ def test_parse_not_json():
 def test_translate_success_three_batches_without_api_key(fake_claude, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
     calls, _ = fake_claude
-    cues = _cues(85)
+    cues = _cues(45)
     result, status = tr.translate_cues(cues, "en", "zh-TW")
 
     assert status == "claude"
-    assert sorted(len(c["items"]) for c in calls) == [5, 40, 40]
-    assert [c.translation for c in result] == [f"譯{i}" for i in range(85)]
+    assert sorted(len(c["items"]) for c in calls) == [5, 20, 20]
+    assert [c.translation for c in result] == [f"譯{i}" for i in range(45)]
     assert all(c.translation is None for c in cues)  # 不修改輸入
     for call in calls:
         assert "ANTHROPIC_API_KEY" not in call["env"]
-        assert call["cmd"] == ["C:/fake/claude.cmd", "-p", "--model", "haiku"]
+        assert call["cmd"] == ["C:/fake/claude.cmd", "-p", "--model", "haiku", "--setting-sources=", "--strict-mcp-config"]
 
 
 def test_translate_retry_after_non_json(fake_claude):
