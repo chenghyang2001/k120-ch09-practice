@@ -77,12 +77,16 @@ def test_run_pipeline_integration(data_dir, synthetic_video, fake_stages):
     assert reports[0][0] == "metadata"
 
 
-def test_run_pipeline_no_subtitles(data_dir, fake_stages):
-    fake_stages(lambda *a, **k: pytest.fail("不該下載"), has_subtitles=False)
+def test_run_pipeline_no_subtitles_no_speech(data_dir, fake_stages, monkeypatch):
+    # M7 起沒字幕改走 Whisper；轉錄結果是空的才算失敗
+    fake_stages(lambda *a, **k: pytest.fail("不該下載影片"), has_subtitles=False)
+    monkeypatch.setattr(runner, "download_audio", lambda vid, tmp, progress_hook=None: tmp / "audio.m4a")
+    monkeypatch.setattr(runner, "transcribe", lambda audio, lang, cancelled=None, progress=None: ([], "en"))
     job = {"id": "job456", "video_id": "aaaaaaaaaaa", "url": "u", "quality": 720, "target_lang": "zh-TW"}
     with pytest.raises(AppError) as exc:
         runner.run_pipeline(job, lambda *a: None, lambda: False)
-    assert exc.value.code == "no_subtitles"
+    assert exc.value.code == "no_speech"
+    assert not (config.DATA_DIR / "tmp" / "job456").exists()
 
 
 def test_run_pipeline_cancel_before_start(data_dir, fake_stages):
@@ -90,3 +94,22 @@ def test_run_pipeline_cancel_before_start(data_dir, fake_stages):
     job = {"id": "job789", "video_id": "aaaaaaaaaaa", "url": "u", "quality": 720, "target_lang": "zh-TW"}
     with pytest.raises(runner.JobCancelled):
         runner.run_pipeline(job, lambda *a: None, lambda: True)
+
+
+def test_run_pipeline_translate_cancel_and_progress(data_dir, fake_stages, monkeypatch):
+    from app.pipeline.translate import TranslationCancelled
+
+    def cancelling_translate(cues, src, tgt, info, cancelled=None, progress=None):
+        progress(1, 4)
+        progress(2, 4)
+        raise TranslationCancelled()
+
+    fake_stages(lambda *a, **k: pytest.fail("不該下載"))
+    monkeypatch.setattr(runner, "translate_cues", cancelling_translate)
+    job = {"id": "jobt", "video_id": "aaaaaaaaaaa", "url": "u", "quality": 720, "target_lang": "zh-TW"}
+    reports = []
+    with pytest.raises(runner.JobCancelled):
+        runner.run_pipeline(job, lambda *a: reports.append(a), lambda: False)
+    # 翻譯進度換算到 15→40
+    assert [(s, p) for s, p, _ in reports if s == "translate"] == [("translate", 15), ("translate", 21),
+                                                                   ("translate", 27)]

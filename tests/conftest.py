@@ -104,3 +104,24 @@ def fake_stages(monkeypatch):
         monkeypatch.setattr(runner, "download_video", download)
 
     return _patch
+
+
+# M7：translate_cues 多了 cancelled／progress 關鍵字參數，上面 M4 版本的假翻譯只收 4 個位置參數會 TypeError。
+# conftest 規定只能追加，所以在這裡用同名 fixture 覆蓋（模組後定義者生效），其餘行為完全相同
+@pytest.fixture
+def fake_stages(monkeypatch):  # noqa: F811
+    """把 runner 會連網的階段換成假的；download 由測試自行提供。"""
+    from app.pipeline import runner
+    from app.pipeline.subtitles import Cue, SubtitleTrack
+
+    def _patch(download, has_subtitles: bool = True) -> None:
+        # 每段 4 秒放 2 句，配合 synthetic_video 剛好三頁
+        cues = [Cue(id=i, start=i * 2.0, end=i * 2.0 + 2.0, text=f"第{i}句") for i in range(6)]
+        track = SubtitleTrack("manual", "en", "https://example.invalid/sub")
+        monkeypatch.setattr(runner, "fetch_video_info",
+                            lambda vid: {"id": vid, "title": "測試影片", "duration": 12.0, "language": "en"})
+        monkeypatch.setattr(runner, "fetch_cues", lambda info, lang: (cues, track) if has_subtitles else None)
+        monkeypatch.setattr(runner, "translate_cues", lambda c, src, tgt, info, **kwargs: (c, "claude"))
+        monkeypatch.setattr(runner, "download_video", download)
+
+    return _patch

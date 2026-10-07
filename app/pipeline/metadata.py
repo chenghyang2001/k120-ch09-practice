@@ -6,6 +6,7 @@ import yt_dlp
 
 from app.config import MAX_DURATION_SEC
 from app.errors import AppError
+from app.pipeline.url import VIDEO_ID_RE
 
 # 依序比對，先命中者勝；bot 檢查要排在 age 之前，兩者都以 "sign in to confirm" 開頭。
 # 「不可播放」與網路錯誤放最後，因為其他訊息也可能附帶 unavailable、try again later 字樣
@@ -33,6 +34,9 @@ _ERROR_PATTERNS: tuple[tuple[tuple[str, ...], str, str], ...] = (
 )
 
 _UNSUPPORTED_AVAILABILITY = ("subscriber_only", "premium_only", "needs_auth")
+
+# flat 模式拿不到 availability 時，YouTube 只會把私人／已刪除影片的標題換成這兩種佔位字
+_UNAVAILABLE_TITLES = ("[private video]", "[deleted video]")
 
 
 @dataclass
@@ -104,3 +108,23 @@ def to_meta(info: dict) -> VideoMeta:
         language=detect_primary_language(info),
         webpage_url=info.get("webpage_url") or f"https://www.youtube.com/watch?v={info['id']}",
     )
+
+
+def _is_playable_entry(entry: dict | None) -> bool:
+    if not entry or not isinstance(entry.get("id"), str) or not VIDEO_ID_RE.fullmatch(entry["id"]):
+        return False
+    if entry.get("availability") in ("private", *_UNSUPPORTED_AVAILABILITY):
+        return False
+    return (entry.get("title") or "").strip().lower() not in _UNAVAILABLE_TITLES
+
+
+def list_playlist(playlist_id: str) -> tuple[str, list[str]]:
+    """回傳 (清單標題, 可處理的 video_id 清單)；只列項目不解析每支影片，速度才快。"""
+    opts = {"extract_flat": "in_playlist", "quiet": True}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/playlist?list={playlist_id}", download=False)
+    except yt_dlp.utils.DownloadError as e:
+        raise _map_download_error(str(e)) from e
+    entries = info.get("entries") or []
+    return info.get("title") or "", [e["id"] for e in entries if _is_playable_entry(e)]

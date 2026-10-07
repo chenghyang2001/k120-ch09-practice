@@ -5,7 +5,9 @@ import os
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 
 from app.config import (
@@ -34,6 +36,15 @@ _ISOLATION_FLAGS = ("--setting-sources=", "--strict-mcp-config")
 
 # 這些都代表「claude 這次回得不能用」，一律走重試／對半切的降級流程
 _RETRYABLE = (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired)
+
+# 等 claude 回覆時多久看一次取消旗標；太長取消反應慢，太短只是多幾次空轉
+_POLL_SEC = 0.5
+
+Cancelled = Callable[[], bool] | None
+
+
+class TranslationCancelled(Exception):
+    """翻譯途中使用者取消；runner 轉成 JobCancelled。"""
 
 
 def _canonical(lang: str) -> str:
@@ -96,21 +107,46 @@ def _build_prompt(batch: list[Cue], target: str) -> str:
     )
 
 
-def _call_claude(prompt: str) -> str:
+def _kill(proc: subprocess.Popen) -> None:
+    if sys.platform == "win32":
+        # claude.cmd 會再起 node；只殺 cmd.exe 的話 node 仍握著 pipe，後面的 communicate 會卡住
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                       capture_output=True, check=False)
+    proc.kill()
+    try:
+        proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _call_claude(prompt: str, cancelled: Cancelled = None) -> str:
     path = _claude_path()
     if path is None:
         raise RuntimeError("找不到 claude CLI")
     env = os.environ.copy()
     # 成本規則：CLI 只要看到 ANTHROPIC_API_KEY 就會改扣 API Credits，移除後才會走 Max 訂閱額度
     env.pop("ANTHROPIC_API_KEY", None)
-    proc = subprocess.run(
-        [path, "-p", "--model", TRANSLATE_MODEL, *_ISOLATION_FLAGS],
-        input=prompt, capture_output=True, encoding="utf-8",
-        timeout=TRANSLATE_TIMEOUT_SEC, env=env, check=False,
-    )
+    cmd = [path, "-p", "--model", TRANSLATE_MODEL, *_ISOLATION_FLAGS]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            encoding="utf-8", env=env)
+    deadline = time.monotonic() + TRANSLATE_TIMEOUT_SEC
+    pending_input: str | None = prompt
+    while True:
+        try:
+            stdout, stderr = proc.communicate(input=pending_input, timeout=_POLL_SEC)
+            break
+        except subprocess.TimeoutExpired:
+            # communicate 重入時不能再給 input，第一次已經送出
+            pending_input = None
+            if cancelled is not None and cancelled():
+                _kill(proc)
+                raise TranslationCancelled() from None
+            if time.monotonic() >= deadline:
+                _kill(proc)
+                raise subprocess.TimeoutExpired(cmd, TRANSLATE_TIMEOUT_SEC) from None
     if proc.returncode != 0:
-        raise RuntimeError(f"claude 結束碼 {proc.returncode}：{(proc.stderr or '')[:200]}")
-    return proc.stdout or ""
+        raise RuntimeError(f"claude 結束碼 {proc.returncode}：{(stderr or '')[:200]}")
+    return stdout or ""
 
 
 def _parse_reply(reply: str, batch: list[Cue]) -> dict[int, str]:
@@ -134,19 +170,21 @@ def _parse_reply(reply: str, batch: list[Cue]) -> dict[int, str]:
     return result
 
 
-def _translate_batch(batch: list[Cue], target: str) -> dict[int, str]:
+def _translate_batch(batch: list[Cue], target: str, cancelled: Cancelled = None) -> dict[int, str]:
     """失敗先重試 1 次，再失敗就對半切開遞迴；單句仍失敗就放棄這句，不讓整個工作失敗。"""
     prompt = _build_prompt(batch, target)
     for _ in range(2):
+        if cancelled is not None and cancelled():
+            raise TranslationCancelled()
         try:
-            return _parse_reply(_call_claude(prompt), batch)
+            return _parse_reply(_call_claude(prompt, cancelled), batch)
         except _RETRYABLE as e:
             print(f"翻譯批次失敗（id {batch[0].id}–{batch[-1].id}）：{type(e).__name__}", file=sys.stderr)
             continue
     if len(batch) == 1:
         return {}
     mid = len(batch) // 2
-    return {**_translate_batch(batch[:mid], target), **_translate_batch(batch[mid:], target)}
+    return {**_translate_batch(batch[:mid], target, cancelled), **_translate_batch(batch[mid:], target, cancelled)}
 
 
 def _from_youtube_manual(cues: list[Cue], target: str, info: dict | None) -> list[Cue] | None:
@@ -164,8 +202,12 @@ def _from_youtube_manual(cues: list[Cue], target: str, info: dict | None) -> lis
 
 
 def translate_cues(cues: list[Cue], source_lang: str | None, target: str,
-                   info: dict | None = None) -> tuple[list[Cue], str]:
-    """回傳 (新 cues, status)；status 為 same_language／youtube_manual／claude_unavailable／claude／partial。"""
+                   info: dict | None = None, cancelled: Cancelled = None,
+                   progress: Callable[[int, int], None] | None = None) -> tuple[list[Cue], str]:
+    """回傳 (新 cues, status)；status 為 same_language／youtube_manual／claude_unavailable／claude／partial。
+
+    cancelled 為 True 時丟 TranslationCancelled；progress(已完成批數, 總批數) 每完成一批呼叫一次。
+    """
     if target not in LANG_NAMES:
         raise AppError("invalid_target_lang", "不支援的目標語言")
     if same_language(source_lang, target):
@@ -179,8 +221,17 @@ def translate_cues(cues: list[Cue], source_lang: str | None, target: str,
     batches = [cues[i:i + TRANSLATE_BATCH] for i in range(0, len(cues), TRANSLATE_BATCH)]
     translations: dict[int, str] = {}
     with ThreadPoolExecutor(TRANSLATE_CONCURRENCY) as pool:
-        for part in pool.map(lambda b: _translate_batch(b, target), batches):
-            translations.update(part)
+        futures = [pool.submit(_translate_batch, b, target, cancelled) for b in batches]
+        try:
+            for done, future in enumerate(as_completed(futures), start=1):
+                translations.update(future.result())
+                if progress is not None:
+                    progress(done, len(batches))
+        except TranslationCancelled:
+            # 還沒輪到的批次直接丟掉，不要等它們一一開始再各自發現取消
+            for future in futures:
+                future.cancel()
+            raise
     result = [replace(c, translation=translations.get(c.id)) for c in cues]
     status = "partial" if any(c.translation is None for c in result) else "claude"
     return result, status

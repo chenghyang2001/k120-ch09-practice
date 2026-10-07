@@ -60,13 +60,6 @@ def test_invalid_url_400(make_client):
         assert resp.json()["error"]["code"] == "invalid_url"
 
 
-def test_playlist_400(make_client):
-    with make_client() as client:
-        resp = client.post("/api/jobs", json={"url": "https://www.youtube.com/playlist?list=PL1234567890"})
-        assert resp.status_code == 400
-        assert resp.json()["error"]["code"] == "playlist_unsupported"
-
-
 @pytest.mark.parametrize("body", [{"url": URL_A, "quality": 999}, {"url": URL_A, "target_lang": "fr"}])
 def test_invalid_params_422(make_client, body):
     with make_client() as client:

@@ -14,7 +14,8 @@ from app.pipeline.metadata import (
 )
 from app.pipeline.slides import build_slides
 from app.pipeline.subtitles import fetch_cues
-from app.pipeline.translate import translate_cues
+from app.pipeline.transcribe import TranscriptionCancelled, download_audio, transcribe
+from app.pipeline.translate import TranslationCancelled, translate_cues
 
 Report = Callable[[str, int, str], None]
 
@@ -42,12 +43,21 @@ def run_pipeline(job: dict, report: Report, cancelled: Callable[[], bool]) -> di
         step("subtitles", 15, "取得字幕")
         lang = detect_primary_language(info)
         result = fetch_cues(info, lang) if lang else None
-        if result is None:
-            raise AppError("no_subtitles", "此影片沒有字幕，Whisper 轉錄將在 M7 支援")
-        cues, track = result
+        if result is not None:
+            cues, track = result
+            subtitle_kind, translate_from = track.kind, 15
+        else:
+            cues, lang = _whisper(job["video_id"], lang, tmp_dir, step, report, cancelled)
+            subtitle_kind, translate_from = "whisper", 30
 
-        step("translate", 15, "翻譯字幕")
-        cues, translate_status = translate_cues(cues, lang, job["target_lang"], info)
+        # Whisper 已經把進度推到 30，翻譯接著往上走，進度才不會倒退
+        step("translate", translate_from, "翻譯字幕")
+        try:
+            cues, translate_status = translate_cues(
+                cues, lang, job["target_lang"], info, cancelled=cancelled,
+                progress=_ranged(report, "translate", "翻譯字幕", translate_from, 40))
+        except TranslationCancelled as e:
+            raise JobCancelled() from e
 
         step("download", 40, "下載影片")
         video, height = download_video(job["video_id"], job["quality"], tmp_dir, info.get("duration"),
@@ -67,7 +77,7 @@ def run_pipeline(job: dict, report: Report, cancelled: Callable[[], bool]) -> di
             "target_lang": job["target_lang"],
             "source_lang": lang,
             "translate_status": translate_status,
-            "subtitle_kind": track.kind,
+            "subtitle_kind": subtitle_kind,
             "slide_count": len(slides),
         }
         (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -77,6 +87,44 @@ def run_pipeline(job: dict, report: Report, cancelled: Callable[[], bool]) -> di
     finally:
         # 影片與截圖可能好幾 GB，成功、失敗、取消都要清
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _whisper(video_id: str, lang: str | None, tmp_dir, step, report: Report,
+             cancelled: Callable[[], bool]) -> tuple[list, str]:
+    """無字幕備援：下載音訊並轉錄；回傳 (cues, Whisper 偵測到的語言)。音訊放 tmp_dir，由呼叫端清除。"""
+    message = "無字幕，使用 Whisper 轉錄（較慢）"
+    step("subtitles", 15, message)
+
+    def audio_hook(d: dict) -> None:
+        if cancelled():
+            raise JobCancelled()
+
+    audio = download_audio(video_id, tmp_dir, progress_hook=audio_hook)
+    step("subtitles", 15, message)
+    ranged = _ranged(report, "subtitles", message, 15, 30)
+    try:
+        cues, detected = transcribe(audio, lang, cancelled=cancelled, progress=lambda ratio: ranged(ratio, 1))
+    except TranscriptionCancelled as e:
+        raise JobCancelled() from e
+    if not cues:
+        raise AppError("no_speech", "影片中沒有可辨識的語音")
+    return cues, detected
+
+
+def _ranged(report: Report, stage: str, message: str, low: int, high: int) -> Callable[[float, float], None]:
+    """把 (已完成, 總數) 換算成 low→high 的整數進度；只在整數進度變大時回報，避免頻繁寫資料庫。"""
+    last = low
+
+    def progress(done: float, total: float) -> None:
+        nonlocal last
+        if not total:
+            return
+        value = low + int((high - low) * min(done, total) / total)
+        if value > last:
+            last = value
+            report(stage, value, message)
+
+    return progress
 
 
 def _download_hook(report: Report, cancelled: Callable[[], bool]) -> Callable[[dict], None]:

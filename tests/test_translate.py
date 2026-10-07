@@ -1,8 +1,8 @@
-"""M3 翻譯測試：全部 mock subprocess／which／download_track，不呼叫真的 claude、不連網。"""
+"""M3 翻譯測試：全部 mock subprocess.Popen／which／download_track，不呼叫真的 claude、不連網。"""
 
 import json
 import subprocess
-from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
@@ -24,19 +24,52 @@ def _ok_reply(items: list[dict]) -> str:
     return json.dumps([{"id": it["id"], "text": f"譯{it['id']}"} for it in items], ensure_ascii=False)
 
 
+class FakePopen:
+    """模擬 claude 子程序；communicate 第一次收到 prompt 就依 state 回覆。"""
+
+    def __init__(self, calls: list[dict], state: dict, cmd, **kwargs):
+        self.calls, self.state, self.cmd, self.env = calls, state, cmd, kwargs["env"]
+        self.pid = 4242
+        self.returncode = None
+        self.killed = False
+
+    def communicate(self, input=None, timeout=None):
+        items = _payload(input)
+        self.calls.append({"cmd": self.cmd, "env": self.env, "items": items})
+        self.returncode = self.state["returncode"]
+        return self.state["reply"](items, len(self.calls)), ""
+
+    def kill(self):
+        self.killed = True
+
+
+class HangingPopen(FakePopen):
+    """永遠不回覆，模擬 claude 卡住；只有 kill 之後的 communicate 會結束。"""
+
+    instances: ClassVar[list["HangingPopen"]] = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        HangingPopen.instances.append(self)
+
+    def communicate(self, input=None, timeout=None):
+        if input is not None:
+            self.calls.append({"cmd": self.cmd, "env": self.env, "items": _payload(input)})
+        if self.killed:
+            return "", ""
+        raise subprocess.TimeoutExpired(self.cmd, timeout)
+
+
 @pytest.fixture
 def fake_claude(monkeypatch):
     """回傳 calls 清單；測試用 state["reply"] 指定回覆函式 (items, call_no) -> stdout。"""
     calls: list[dict] = []
-    state = {"reply": lambda items, n: _ok_reply(items), "returncode": 0}
-
-    def fake_run(cmd, **kwargs):
-        items = _payload(kwargs["input"])
-        calls.append({"cmd": cmd, "env": kwargs["env"], "items": items})
-        return SimpleNamespace(returncode=state["returncode"], stdout=state["reply"](items, len(calls)), stderr="")
+    state = {"reply": lambda items, n: _ok_reply(items), "returncode": 0, "popen": FakePopen, "taskkill": []}
 
     monkeypatch.setattr(tr.shutil, "which", lambda name: "C:/fake/claude.cmd")
-    monkeypatch.setattr(tr.subprocess, "run", fake_run)
+    monkeypatch.setattr(tr.subprocess, "Popen", lambda cmd, **kw: state["popen"](calls, state, cmd, **kw))
+    # _kill 在 Windows 會呼叫 taskkill，測試中只記錄不執行
+    monkeypatch.setattr(tr.subprocess, "run", lambda cmd, **kw: state["taskkill"].append(cmd))
     return calls, state
 
 
@@ -193,13 +226,16 @@ def test_translate_single_cue_fails_partial(fake_claude):
 
 
 def test_translate_timeout_and_returncode_degrade(fake_claude, monkeypatch):
-    def boom(cmd, **kwargs):
-        raise subprocess.TimeoutExpired(cmd, 180)
-
-    monkeypatch.setattr(tr.subprocess, "run", boom)
+    _, state = fake_claude
+    state["popen"] = HangingPopen
+    HangingPopen.instances.clear()
+    monkeypatch.setattr(tr, "TRANSLATE_TIMEOUT_SEC", 0)
+    monkeypatch.setattr(tr, "_POLL_SEC", 0.01)
     result, status = tr.translate_cues(_cues(2), "en", "zh-TW")
     assert status == "partial"
     assert all(c.translation is None for c in result)
+    # 逾時的子程序都要被殺掉，不能留著佔資源
+    assert HangingPopen.instances and all(p.killed for p in HangingPopen.instances)
 
 
 def test_translate_nonzero_returncode(fake_claude):
@@ -222,7 +258,7 @@ def test_translate_same_language(monkeypatch):
     def must_not_run(*a, **k):
         raise AssertionError("同語言不應呼叫 claude")
 
-    monkeypatch.setattr(tr.subprocess, "run", must_not_run)
+    monkeypatch.setattr(tr.subprocess, "Popen", must_not_run)
     _, status = tr.translate_cues(_cues(2), "zh-Hant", "zh-TW")
     assert status == "same_language"
 
@@ -244,7 +280,7 @@ def test_translate_youtube_manual(monkeypatch):
         return ZH_JSON3
 
     monkeypatch.setattr(tr, "download_track", fake_download)
-    monkeypatch.setattr(tr.subprocess, "run", lambda *a, **k: pytest.fail("不應呼叫 claude"))
+    monkeypatch.setattr(tr.subprocess, "Popen", lambda *a, **k: pytest.fail("不應呼叫 claude"))
     info = {"subtitles": {"zh-Hant": [{"ext": "json3", "url": "u-hant"}]}}
     source = [Cue(0, 0, 2, "Hello everyone."), Cue(1, 2, 4, "Today we talk about testing.")]
     result, status = tr.translate_cues(source, "en", "zh-TW", info)
@@ -274,3 +310,32 @@ def test_build_prompt_contents():
     assert "繁體中文（台灣用語）" in prompt
     assert "code fence" in prompt
     assert _payload(prompt) == [{"id": 0, "text": "[Music]"}]
+
+
+# ---------- M7 取消與進度 ----------
+
+def test_translate_cancel_before_second_batch(fake_claude, monkeypatch):
+    calls, _ = fake_claude
+    monkeypatch.setattr(tr, "TRANSLATE_CONCURRENCY", 1)
+    with pytest.raises(tr.TranslationCancelled):
+        tr.translate_cues(_cues(45), "en", "zh-TW", cancelled=lambda: len(calls) >= 1)
+    assert len(calls) == 1
+
+
+def test_translate_cancel_kills_running_claude(fake_claude, monkeypatch):
+    calls, state = fake_claude
+    state["popen"] = HangingPopen
+    HangingPopen.instances.clear()
+    monkeypatch.setattr(tr, "_POLL_SEC", 0.01)
+    monkeypatch.setattr(tr, "TRANSLATE_CONCURRENCY", 1)
+    with pytest.raises(tr.TranslationCancelled):
+        tr.translate_cues(_cues(3), "en", "zh-TW", cancelled=lambda: len(calls) >= 1)
+    assert len(calls) == 1
+    assert HangingPopen.instances[0].killed
+
+
+def test_translate_progress_monotonic(fake_claude):
+    reports: list[tuple[int, int]] = []
+    _, status = tr.translate_cues(_cues(65), "en", "zh-TW", progress=lambda d, t: reports.append((d, t)))
+    assert status == "claude"
+    assert reports == [(1, 4), (2, 4), (3, 4), (4, 4)]

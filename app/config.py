@@ -41,3 +41,8 @@ TRANSLATE_MODEL = "haiku"
 LANG_NAMES = {"zh-TW": "繁體中文（台灣用語）", "zh-CN": "简体中文", "en": "English", "ja": "日本語", "ko": "한국어"}
 # YouTube 字幕語言代碼的別名：目標語言可能以這些 key 出現在 info["subtitles"]
 LANG_ALIASES = {"zh-TW": ("zh-TW", "zh-Hant", "zh-Hant-TW", "zh-HK"), "zh-CN": ("zh-CN", "zh-Hans", "zh-Hans-CN", "zh"), "en": ("en", "en-US", "en-GB"), "ja": ("ja",), "ko": ("ko",)}
+
+# M7 Whisper 備援；這台機器沒有 NVIDIA GPU，只能跑 CPU + int8
+WHISPER_MODEL = "small"
+WHISPER_COMPUTE = "int8"
+WHISPER_DEVICE = "cpu"
