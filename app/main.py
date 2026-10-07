@@ -4,18 +4,24 @@ import json
 import logging
 import shutil
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import config
 from app.errors import AppError
 from app.jobs import JobManager
+from app.pipeline import export
 
 logger = logging.getLogger(__name__)
+APP_DIR = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=APP_DIR / "templates")
 
 
 class HttpError(AppError):
@@ -52,8 +58,15 @@ async def create_job(body: JobRequest, request: Request) -> dict:
 
 
 @router.get("/api/jobs")
-async def list_jobs(request: Request) -> list[dict]:
-    return _manager(request).store.list()
+async def list_jobs(request: Request, parent: str | None = None) -> list[dict]:
+    store = _manager(request).store
+    if parent is None:
+        return store.list()
+    try:
+        return store.list(parent_id=parent)
+    except TypeError:
+        # M7 之前 JobStore.list 不接受 parent_id，視為沒有子工作
+        return []
 
 
 @router.get("/api/jobs/{job_id}")
@@ -96,6 +109,43 @@ async def get_slides(job_id: str, request: Request) -> FileResponse:
     return FileResponse(path, media_type="application/json")
 
 
+EXPORTERS = {
+    "html": (export.build_html, "text/html; charset=utf-8", "html"),
+    "pdf": (export.build_pdf, "application/pdf", "pdf"),
+    "md": (export.build_markdown_zip, "application/zip", "zip"),
+}
+
+
+@router.get("/api/jobs/{job_id}/export")
+async def export_job(job_id: str, request: Request, format: str = "html") -> Response:
+    job = _get_job(request, job_id)
+    if format not in EXPORTERS:
+        raise HttpError(400, "bad_format", "匯出格式只支援 html、pdf、md")
+    if job["status"] != "done":
+        raise HttpError(409, "job_not_done", "工作尚未完成")
+    job_dir = _manager(request).data_dir / "jobs" / job_id
+    if not (job_dir / "slides.json").is_file():
+        raise HttpError(404, "not_found", "找不到投影片資料")
+    build, media_type, ext = EXPORTERS[format]
+    # 圖片 base64、zip 壓縮、Playwright sync API 都是阻塞操作，放 thread 跑
+    content = await run_in_threadpool(build, job, job_dir)
+    return Response(content, media_type=media_type,
+                    headers={"Content-Disposition": f'attachment; filename="{job["video_id"]}.{ext}"'})
+
+
+@router.get("/", include_in_schema=False)
+async def index_page(request: Request) -> Response:
+    return templates.TemplateResponse(request, "index.html", {
+        "qualities": config.QUALITY_HEIGHTS, "langs": config.LANG_NAMES,
+    })
+
+
+@router.get("/read/{job_id}", include_in_schema=False)
+async def reader_page(job_id: str, request: Request) -> Response:
+    job = _get_job(request, job_id)
+    return templates.TemplateResponse(request, "reader.html", {"job": job})
+
+
 async def _app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse({"error": {"code": exc.code, "message": exc.message}},
                         status_code=getattr(exc, "status", 400))
@@ -134,6 +184,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, _internal_error_handler)
     # check_dir=False：目錄在 lifespan 才建立，import 時不在磁碟留東西
     app.mount("/media", StaticFiles(directory=data_dir / "jobs", check_dir=False), name="media")
+    app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
     return app
 
 

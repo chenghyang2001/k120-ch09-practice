@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ job.title or job.video_id }} · 閱讀器</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="reader" data-job-id="{{ job.id }}">
+<header class="topbar toolbar">
+  <a class="btn btn-ghost" href="/" aria-label="回首頁">←</a>
+  <h1 class="reader-title" id="reader-title">{{ job.title or job.video_id }}</h1>
+  <div class="segmented" role="group" aria-label="語言模式">
+    <button type="button" class="btn" data-mode="orig">原文</button>
+    <button type="button" class="btn" data-mode="tr">譯文</button>
+    <button type="button" class="btn" data-mode="both">雙語</button>
+  </div>
+  <span class="page-counter" id="page-counter" aria-live="polite">– / –</span>
+  <details class="menu" id="export-menu">
+    <summary class="btn">匯出</summary>
+    <div class="menu-items">
+      <a href="/api/jobs/{{ job.id }}/export?format=html" data-export="html">HTML（離線閱讀）</a>
+      <a href="/api/jobs/{{ job.id }}/export?format=pdf" data-export="pdf">PDF</a>
+      <a href="/api/jobs/{{ job.id }}/export?format=md" data-export="md">Markdown（zip）</a>
+    </div>
+  </details>
+  <button type="button" class="btn" id="fullscreen-btn" aria-label="全螢幕">⛶</button>
+</header>
+<p class="notice" id="notice" role="status" hidden></p>
+<main class="reader-main" id="reader-main">
+  <figure class="slide-figure">
+    <img id="slide-img" alt="投影片">
+    <button type="button" class="nav nav-prev" id="prev-btn" aria-label="上一頁">‹</button>
+    <button type="button" class="nav nav-next" id="next-btn" aria-label="下一頁">›</button>
+  </figure>
+  <ul class="cue-list" id="cue-list"></ul>
+</main>
+<footer class="thumb-bar" id="thumb-bar">
+  <button type="button" class="thumb-toggle" id="thumb-toggle" aria-expanded="true">縮圖列 ▾</button>
+  <div class="thumb-strip" id="thumb-strip"></div>
+</footer>
+<script src="/static/reader.js"></script>
+</body>
+</html>
