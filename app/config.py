@@ -17,3 +17,12 @@ SENTENCE_END = ".?!。？！"
 
 # 以語言 base code（例如 zh-TW → zh）判斷，這些語言不以空白分詞
 CJK_LANGS = ("zh", "ja")
+
+# M2 截圖與去重
+QUALITY_HEIGHTS = (360, 480, 720, 1080)
+FRAME_WORKERS = 4
+DEDUPE_THRESHOLD = 8      # pHash 漢明距離 ≤ 門檻 → 同一頁
+MAX_SLIDE_SEC = 60.0      # 一頁最長時間，避免講者影片整支變一頁
+MAX_SLIDE_CUES = 10       # 一頁最多字幕句數
+WEBP_QUALITY = 80
+THUMB_WIDTH = 320
