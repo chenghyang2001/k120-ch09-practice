@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
@@ -135,7 +136,8 @@ def _translate_batch(batch: list[Cue], target: str) -> dict[int, str]:
     for _ in range(2):
         try:
             return _parse_reply(_call_claude(prompt), batch)
-        except _RETRYABLE:
+        except _RETRYABLE as e:
+            print(f"翻譯批次失敗（id {batch[0].id}–{batch[-1].id}）：{type(e).__name__}", file=sys.stderr)
             continue
     if len(batch) == 1:
         return {}

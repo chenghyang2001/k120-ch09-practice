@@ -30,7 +30,7 @@ THUMB_WIDTH = 320
 # M3 翻譯
 TRANSLATE_BATCH = 40
 TRANSLATE_CONCURRENCY = 2
-TRANSLATE_TIMEOUT_SEC = 180
+TRANSLATE_TIMEOUT_SEC = 60  # 正常一批約 15 秒；偶發卡住時別每次空等 3 分鐘
 TRANSLATE_MODEL = "haiku"
 LANG_NAMES = {"zh-TW": "繁體中文（台灣用語）", "zh-CN": "简体中文", "en": "English", "ja": "日本語", "ko": "한국어"}
 # YouTube 字幕語言代碼的別名：目標語言可能以這些 key 出現在 info["subtitles"]
