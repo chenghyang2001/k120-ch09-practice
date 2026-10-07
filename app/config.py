@@ -1,5 +1,11 @@
 """全域預設值。"""
 
+import os
+from pathlib import Path
+
+# M4：資料目錄（SQLite、輸出、暫存）；測試以環境變數改到 tmp_path
+DATA_DIR = Path(os.environ.get("K120_DATA_DIR") or "data")
+
 MAX_DURATION_SEC = 4 * 3600
 SUPPORTED_TARGET_LANGS = ("zh-TW", "zh-CN", "en", "ja", "ko")
 

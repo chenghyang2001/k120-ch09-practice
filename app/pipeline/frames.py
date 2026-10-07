@@ -71,7 +71,7 @@ def ensure_disk_space(path: Path, needed: int) -> None:
 
 
 def download_video(video_id: str, height: int, tmp_dir: Path,
-                   duration: float | None = None) -> tuple[Path, int]:
+                   duration: float | None = None, progress_hook=None) -> tuple[Path, int]:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     if duration is not None:
         ensure_disk_space(tmp_dir, estimate_bytes(duration, height))
@@ -81,6 +81,8 @@ def download_video(video_id: str, height: int, tmp_dir: Path,
         "quiet": True, "noprogress": True,
         "no_warnings": True,
     }
+    if progress_hook is not None:
+        opts["progress_hooks"] = [progress_hook]
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=True)
