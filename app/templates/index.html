@@ -28,6 +28,12 @@
         {% for code, name in langs.items() %}<option value="{{ code }}"{% if code == 'zh-TW' %} selected{% endif %}>{{ name }}</option>{% endfor %}
       </select>
     </label>
+    <div class="deliver-options">
+      <label class="check"><input type="checkbox" id="deliver-drive" value="drive"> 完成後存到 Google Drive</label>
+      <small class="deliver-reason" id="deliver-drive-reason" hidden></small>
+      <label class="check"><input type="checkbox" id="deliver-gmail" value="gmail"> 完成後寄到 Gmail</label>
+      <small class="deliver-reason" id="deliver-gmail-reason" hidden></small>
+    </div>
     <button type="submit" class="btn btn-primary" id="submit-btn">開始</button>
     <p class="form-error" id="form-error" role="alert" hidden></p>
   </form>

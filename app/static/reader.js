@@ -221,7 +221,67 @@
     }
   }
 
+  var DELIVER_TARGETS = { drive: "Drive", gmail: "Gmail" };
+
+  async function deliver(btn) {
+    var target = btn.dataset.deliver;
+    btn.disabled = true;
+    notice("傳送中…");
+    try {
+      var res = await fetch(
+        "/api/jobs/" + encodeURIComponent(jobId) + "/deliver",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targets: [target] }),
+        },
+      );
+      var body = null;
+      try {
+        body = await res.json();
+      } catch (e) {
+        /* 非 JSON */
+      }
+      if (!res.ok) {
+        throw new Error(
+          body && body.error ? body.error.message : "HTTP " + res.status,
+        );
+      }
+      var text = body[target] || "";
+      notice(DELIVER_TARGETS[target] + "：" + text, text.indexOf("失敗") === 0);
+    } catch (e) {
+      notice(DELIVER_TARGETS[target] + "：失敗：" + e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // 狀態載入前先反灰，不可用時以 title 說明原因
+  async function loadDeliveryStatus() {
+    var buttons = document.querySelectorAll("[data-deliver]");
+    buttons.forEach(function (b) {
+      b.disabled = true;
+      b.title = "檢查中…";
+    });
+    var status = null;
+    try {
+      status = await fetchJson("/api/delivery/status");
+    } catch (e) {
+      status = null;
+    }
+    buttons.forEach(function (b) {
+      var s = status && status[b.dataset.deliver];
+      b.disabled = !(s && s.ok);
+      b.title = s ? s.reason : "無法取得傳送狀態";
+    });
+  }
+
   function bindEvents() {
+    document.querySelectorAll("[data-deliver]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        deliver(b);
+      });
+    });
     document.querySelectorAll("[data-mode]").forEach(function (b) {
       b.addEventListener("click", function () {
         setMode(b.dataset.mode);
@@ -272,6 +332,7 @@
 
   async function init() {
     bindEvents();
+    loadDeliveryStatus();
     var savedMode = load(modeKey);
     if (MODES.indexOf(savedMode) !== -1) mode = savedMode;
     try {

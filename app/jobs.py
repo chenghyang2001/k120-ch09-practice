@@ -1,6 +1,7 @@
 """工作佇列：SQLite 狀態、單一 worker、取消旗標、SSE 訂閱、播放清單群組。"""
 
 import asyncio
+import json
 import logging
 import shutil
 import sqlite3
@@ -11,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.errors import AppError
-from app.pipeline import metadata, runner
+from app.pipeline import delivery, metadata, runner
 from app.pipeline.url import parse_youtube_url
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 TERMINAL = ("done", "failed", "cancelled", "interrupted")
 COLUMNS = ("id", "video_id", "url", "quality", "target_lang", "status", "stage", "progress", "message",
            "error_code", "error", "title", "duration", "slide_count", "translate_status",
-           "created_at", "finished_at", "parent_id", "kind")
+           "created_at", "finished_at", "parent_id", "kind", "deliver", "deliver_result")
 # 播放清單那一列沒有 video_id，所以 video_id 可為 NULL
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS {table} (
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS {table} (
     target_lang TEXT NOT NULL, status TEXT NOT NULL, stage TEXT, progress INTEGER NOT NULL DEFAULT 0,
     message TEXT, error_code TEXT, error TEXT, title TEXT, duration REAL, slide_count INTEGER,
     translate_status TEXT, created_at TEXT NOT NULL, finished_at TEXT,
-    parent_id TEXT, kind TEXT DEFAULT 'video'
+    parent_id TEXT, kind TEXT DEFAULT 'video', deliver TEXT, deliver_result TEXT
 )
 """
 # 只附在播放清單那一列的統計；failed 包含 cancelled、interrupted
@@ -71,6 +72,9 @@ class JobStore:
             self._execute("ALTER TABLE jobs ADD COLUMN parent_id TEXT")
         if "kind" not in info:
             self._execute("ALTER TABLE jobs ADD COLUMN kind TEXT DEFAULT 'video'")
+        for column in ("deliver", "deliver_result"):
+            if column not in info:
+                self._execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
         if not info["video_id"]["notnull"]:
             return
         # SQLite 不能用 ALTER 拿掉 NOT NULL，只能在同一個交易裡重建資料表
@@ -87,12 +91,13 @@ class JobStore:
                 conn.close()
 
     def create(self, video_id: str | None, url: str, quality: int, target_lang: str,
-               parent_id: str | None = None, kind: str = "video", status: str = "queued") -> dict:
+               parent_id: str | None = None, kind: str = "video", status: str = "queued",
+               deliver: str | None = None) -> dict:
         job_id = uuid.uuid4().hex[:12]
         self._execute(
             "INSERT INTO jobs (id, video_id, url, quality, target_lang, status, progress, created_at,"
-            " parent_id, kind) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-            (job_id, video_id, url, quality, target_lang, status, _now(), parent_id, kind),
+            " parent_id, kind, deliver) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+            (job_id, video_id, url, quality, target_lang, status, _now(), parent_id, kind, deliver),
         )
         return self.get(job_id)
 
@@ -187,30 +192,35 @@ class JobManager:
             except asyncio.CancelledError:
                 pass
 
-    def submit(self, url: str, quality: int, target_lang: str) -> list[str]:
+    def submit(self, url: str, quality: int, target_lang: str, deliver: list[str] = ()) -> list[str]:
         parsed = parse_youtube_url(url)
+        # 存成 "drive,gmail"；沒勾就是 NULL
+        targets = ",".join(deliver) or None
         if parsed.kind == "playlist":
-            return self._submit_playlist(url, parsed.playlist_id, quality, target_lang)
+            return self._submit_playlist(url, parsed.playlist_id, quality, target_lang, targets)
         existing = self.store.find(parsed.video_id, quality, target_lang, ("done", "queued", "running"))
         if existing is not None:
             return [existing["id"]]
-        job = self.store.create(parsed.video_id, url, quality, target_lang)
+        job = self.store.create(parsed.video_id, url, quality, target_lang, deliver=targets)
         self._queue.put_nowait(job["id"])
         return [job["id"]]
 
-    def _submit_playlist(self, url: str, playlist_id: str, quality: int, target_lang: str) -> list[str]:
+    def _submit_playlist(self, url: str, playlist_id: str, quality: int, target_lang: str,
+                         deliver: str | None = None) -> list[str]:
         """回傳 [清單 id, *子工作 id]。"""
         title, video_ids = metadata.list_playlist(playlist_id)
         if not video_ids:
             raise AppError("empty_playlist", "播放清單沒有可處理的影片")
-        parent = self.store.create(None, url, quality, target_lang, kind="playlist", status="running")
+        parent = self.store.create(None, url, quality, target_lang, kind="playlist", status="running",
+                                   deliver=deliver)
         self.store.update(parent["id"], title=title)
         child_ids, queued = [], []
         for video_id in video_ids:
             child_url = f"https://www.youtube.com/watch?v={video_id}"
             child = self._reuse_done(video_id, child_url, quality, target_lang, parent["id"])
             if child is None:
-                child = self.store.create(video_id, child_url, quality, target_lang, parent_id=parent["id"])
+                child = self.store.create(video_id, child_url, quality, target_lang, parent_id=parent["id"],
+                                          deliver=deliver)
                 queued.append(child["id"])
             child_ids.append(child["id"])
         # 全部建好才排進佇列，避免第一支做完就以為整份清單都結束了
@@ -260,6 +270,15 @@ class JobManager:
             status = "failed"
         self.store.update(parent_id, status=status, progress=100, finished_at=_now())
         self._publish(parent_id)
+
+    def _deliver(self, job_id: str, targets: list[str]) -> str:
+        """worker thread 內執行；任何錯誤都只寫進結果，不讓工作變 failed。"""
+        try:
+            results = delivery.deliver(self.store.get(job_id), targets)
+        except Exception:
+            logger.exception("工作 %s 傳送成果時發生未預期錯誤", job_id)
+            results = {t: "失敗：發生未預期錯誤" for t in targets}
+        return json.dumps(results, ensure_ascii=False)
 
     def cancel(self, job_id: str) -> dict | None:
         job = self.store.get(job_id)
@@ -338,7 +357,14 @@ class JobManager:
 
         try:
             result = await asyncio.to_thread(runner.run_pipeline, job, report, flag.is_set)
-            self.store.update(job_id, status="done", progress=100, finished_at=_now(), **result)
+            self.store.update(job_id, progress=100, **result)
+            fields = {}
+            targets = [t for t in (job.get("deliver") or "").split(",") if t]
+            if targets:
+                # 傳送期間維持 running，處理中卡片才看得到 deliver 階段；傳送結果不影響 done
+                report("deliver", 100, "傳送到 Drive／Gmail")
+                fields["deliver_result"] = await asyncio.to_thread(self._deliver, job_id, targets)
+            self.store.update(job_id, status="done", finished_at=_now(), **fields)
         except runner.JobCancelled:
             self.store.update(job_id, status="cancelled", finished_at=_now())
             shutil.rmtree(self.data_dir / "jobs" / job_id, ignore_errors=True)

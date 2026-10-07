@@ -552,3 +552,23 @@ a {
     height: 40px;
   }
 }
+
+/* 成果傳送 */
+.deliver-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+.check {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.deliver-reason,
+.deliver-summary {
+  color: var(--muted);
+  font-size: 12px;
+}

@@ -11,6 +11,7 @@
     download: "下載影片",
     frames: "截圖與去重",
     output: "寫入輸出",
+    deliver: "傳送到 Drive／Gmail",
   };
   var STATUS_NAMES = {
     queued: "排隊中",
@@ -23,6 +24,13 @@
   var ACTIVE = ["queued", "running"];
   var sources = {}; // job_id → EventSource
   var pollTimer = null;
+  var DELIVER_TARGETS = { drive: "Drive", gmail: "Gmail" };
+  var DELIVER_KEY = "k120:deliver";
+  // 狀態還沒載入前當作不可用，避免按下後才發現沒設定
+  var deliveryStatus = {
+    drive: { ok: false, reason: "檢查中…" },
+    gmail: { ok: false, reason: "檢查中…" },
+  };
 
   function $(id) {
     return document.getElementById(id);
@@ -202,6 +210,111 @@
     }
   }
 
+  // ---------- 成果傳送 ----------
+  function deliverSummary(job) {
+    if (!job.deliver_result) return "";
+    var result;
+    try {
+      result = JSON.parse(job.deliver_result);
+    } catch (e) {
+      return "";
+    }
+    return Object.keys(result)
+      .map(function (t) {
+        return (DELIVER_TARGETS[t] || t) + "：" + result[t];
+      })
+      .join(" · ");
+  }
+
+  function deliverButtons(job, actions, body) {
+    Object.keys(DELIVER_TARGETS).forEach(function (target) {
+      var label = target === "drive" ? "存到 Drive" : "寄到 Gmail";
+      var btn = el("button", "btn", label);
+      btn.type = "button";
+      var status = deliveryStatus[target];
+      btn.disabled = !status.ok;
+      if (!status.ok) btn.title = status.reason;
+      btn.addEventListener("click", async function () {
+        var line = body.querySelector(".deliver-summary");
+        if (!line) {
+          line = el("p", "deliver-summary");
+          body.insertBefore(line, actions);
+        }
+        btn.disabled = true;
+        line.textContent = "傳送中…";
+        try {
+          var result = await api(
+            "/api/jobs/" + encodeURIComponent(job.id) + "/deliver",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ targets: [target] }),
+            },
+          );
+          line.textContent = DELIVER_TARGETS[target] + "：" + result[target];
+        } catch (e) {
+          line.textContent = DELIVER_TARGETS[target] + "：失敗：" + e.message;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+      actions.appendChild(btn);
+    });
+  }
+
+  function loadDeliverChoice() {
+    try {
+      return JSON.parse(window.localStorage.getItem(DELIVER_KEY)) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveDeliverChoice() {
+    var choice = {};
+    Object.keys(DELIVER_TARGETS).forEach(function (t) {
+      choice[t] = $("deliver-" + t).checked;
+    });
+    try {
+      window.localStorage.setItem(DELIVER_KEY, JSON.stringify(choice));
+    } catch (e) {
+      /* 無痕模式等情況忽略 */
+    }
+  }
+
+  function applyDeliveryStatus() {
+    var choice = loadDeliverChoice();
+    Object.keys(DELIVER_TARGETS).forEach(function (t) {
+      var box = $("deliver-" + t);
+      var reason = $("deliver-" + t + "-reason");
+      var status = deliveryStatus[t];
+      box.disabled = !status.ok;
+      box.checked = status.ok && Boolean(choice[t]);
+      reason.textContent = status.ok ? "" : status.reason;
+      reason.hidden = status.ok;
+    });
+  }
+
+  async function loadDeliveryStatus() {
+    try {
+      deliveryStatus = await api("/api/delivery/status");
+    } catch (e) {
+      deliveryStatus = {
+        drive: { ok: false, reason: "無法取得狀態：" + e.message },
+        gmail: { ok: false, reason: "無法取得狀態：" + e.message },
+      };
+    }
+    applyDeliveryStatus();
+    loadJobs();
+  }
+
+  function selectedTargets() {
+    return Object.keys(DELIVER_TARGETS).filter(function (t) {
+      var box = $("deliver-" + t);
+      return box.checked && !box.disabled;
+    });
+  }
+
   // ---------- 歷史卡片 ----------
   function playlistSummary(job) {
     return (
@@ -239,6 +352,8 @@
     meta.appendChild(el("span", null, fmtDate(job.created_at)));
     body.appendChild(meta);
     if (job.error) body.appendChild(el("p", "job-error", job.error));
+    var summary = deliverSummary(job);
+    if (summary) body.appendChild(el("p", "deliver-summary", summary));
 
     var actions = el("div", "job-actions");
     if (job.kind === "playlist") {
@@ -253,6 +368,7 @@
       var open = el("a", "btn btn-primary", "開啟");
       open.href = "/read/" + encodeURIComponent(job.id);
       actions.appendChild(open);
+      deliverButtons(job, actions, body);
     }
     actions.appendChild(deleteControl(job, actions));
     body.appendChild(actions);
@@ -399,6 +515,7 @@
           url: url,
           quality: Number($("quality").value),
           target_lang: $("target-lang").value,
+          deliver: selectedTargets(),
         }),
       });
       $("url").value = "";
@@ -410,5 +527,10 @@
     }
   });
 
+  Object.keys(DELIVER_TARGETS).forEach(function (t) {
+    $("deliver-" + t).addEventListener("change", saveDeliverChoice);
+  });
+  applyDeliveryStatus();
   loadJobs();
+  loadDeliveryStatus();
 })();

@@ -3,6 +3,11 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# 換電腦時帳號設定放在 .env（不進版控）；override=False 讓系統環境變數優先
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
+
 # M4：資料目錄（SQLite、輸出、暫存）；測試以環境變數改到 tmp_path
 DATA_DIR = Path(os.environ.get("K120_DATA_DIR") or "data")
 
@@ -46,3 +51,13 @@ LANG_ALIASES = {"zh-TW": ("zh-TW", "zh-Hant", "zh-Hant-TW", "zh-HK"), "zh-CN": (
 WHISPER_MODEL = "small"
 WHISPER_COMPUTE = "int8"
 WHISPER_DEVICE = "cpu"
+
+# 成果傳送：Drive 走 rclone（remote 需先 rclone config），Gmail 走 SMTP + 應用程式密碼
+DRIVE_REMOTE = os.environ.get("DRIVE_REMOTE") or "gdrive"
+DRIVE_DIR = os.environ.get("DRIVE_DIR") or "YouTube投影片"
+DRIVE_ROOT_FOLDER_ID = os.environ.get("DRIVE_ROOT_FOLDER_ID") or None
+GMAIL_USER = os.environ.get("GMAIL_USER") or None
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD") or None
+MAIL_TO = os.environ.get("MAIL_TO") or GMAIL_USER
+# Gmail 單封上限 25MB 且含 base64 膨脹，原始檔總和抓 20MB
+MAIL_MAX_BYTES = 18 * 1024 * 1024  # base64 編碼後約膨脹 1.37 倍，18MB → 約 24.7MB，才不會超過 Gmail 25MB 上限

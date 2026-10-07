@@ -12,12 +12,12 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app import config
 from app.errors import AppError
 from app.jobs import JobManager
-from app.pipeline import export
+from app.pipeline import delivery, export
 
 logger = logging.getLogger(__name__)
 APP_DIR = Path(__file__).resolve().parent
@@ -36,6 +36,11 @@ class JobRequest(BaseModel):
     url: str
     quality: Literal[config.QUALITY_HEIGHTS] = 720
     target_lang: Literal[tuple(config.LANG_NAMES)] = "zh-TW"
+    deliver: list[Literal["drive", "gmail"]] = []
+
+
+class DeliverRequest(BaseModel):
+    targets: list[Literal["drive", "gmail"]] = Field(min_length=1)
 
 
 router = APIRouter()
@@ -54,7 +59,15 @@ def _get_job(request: Request, job_id: str) -> dict:
 
 @router.post("/api/jobs", status_code=201)
 async def create_job(body: JobRequest, request: Request) -> dict:
-    return {"job_ids": _manager(request).submit(body.url, body.quality, body.target_lang)}
+    return {"job_ids": _manager(request).submit(body.url, body.quality, body.target_lang, body.deliver)}
+
+
+@router.get("/api/delivery/status")
+async def delivery_status() -> dict:
+    # rclone listremotes 是子程序，放 thread 跑
+    drive_ok, drive_reason = await run_in_threadpool(delivery.drive_status)
+    gmail_ok, gmail_reason = delivery.gmail_status()
+    return {"drive": {"ok": drive_ok, "reason": drive_reason}, "gmail": {"ok": gmail_ok, "reason": gmail_reason}}
 
 
 @router.get("/api/jobs")
@@ -107,6 +120,17 @@ async def get_slides(job_id: str, request: Request) -> FileResponse:
     if not path.is_file():
         raise HttpError(404, "not_found", "找不到投影片資料")
     return FileResponse(path, media_type="application/json")
+
+
+@router.post("/api/jobs/{job_id}/deliver")
+async def deliver_job(job_id: str, body: DeliverRequest, request: Request) -> dict:
+    job = _get_job(request, job_id)
+    if job["status"] != "done":
+        raise HttpError(409, "job_not_done", "工作尚未完成")
+    # 產生 PDF、rclone、SMTP 都是阻塞操作
+    results = await run_in_threadpool(delivery.deliver, job, list(dict.fromkeys(body.targets)))
+    _manager(request).store.update(job_id, deliver_result=json.dumps(results, ensure_ascii=False))
+    return results
 
 
 EXPORTERS = {
