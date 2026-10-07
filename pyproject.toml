@@ -3,6 +3,8 @@ name = "k120-ch09-practice"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "imagehash>=4.3.2",
+    "pillow>=12.3.0",
     "yt-dlp>=2026.8.19",
 ]
 
