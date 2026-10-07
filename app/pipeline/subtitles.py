@@ -37,6 +37,7 @@ class Cue:
     start: float
     end: float
     text: str
+    translation: str | None = None
 
 
 @dataclass(frozen=True)

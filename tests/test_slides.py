@@ -20,13 +20,16 @@ def _six_cues():
 @requires_ffmpeg
 def test_build_slides_three_pages(synthetic_video, tmp_path):
     job_dir, tmp_dir = tmp_path / "job", tmp_path / "tmp"
-    result = build_slides(_six_cues(), synthetic_video, job_dir, tmp_dir)
+    cues = _six_cues()
+    cues[2].translation = "Sentence 2"
+    result = build_slides(cues, synthetic_video, job_dir, tmp_dir)
 
     assert [s["index"] for s in result] == [1, 2, 3]
     assert [(s["start"], s["end"]) for s in result] == [(0.0, 4.0), (4.0, 8.0), (8.0, 12.0)]
     assert result[0]["image"] == "images/0001.webp"
     assert result[0]["thumb"] == "thumbs/0001.webp"
     assert [c["text"] for c in result[1]["cues"]] == ["第2句", "第3句"]
+    assert [c["translation"] for c in result[1]["cues"]] == ["Sentence 2", None]
     for s in result:
         with Image.open(job_dir / s["image"]) as img:
             assert img.format == "WEBP" and img.size == (320, 240)

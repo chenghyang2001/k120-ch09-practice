@@ -25,7 +25,8 @@ def _make_slide(n: int, group: SlideGroup, cues: list[Cue], frames: list[Path],
         "end": members[-1].end,
         "image": f"images/{name}",
         "thumb": f"thumbs/{name}",
-        "cues": [{"start": c.start, "end": c.end, "text": c.text} for c in members],
+        "cues": [{"start": c.start, "end": c.end, "text": c.text, "translation": c.translation}
+                 for c in members],
     }
 
 

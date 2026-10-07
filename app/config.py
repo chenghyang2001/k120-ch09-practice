@@ -26,3 +26,12 @@ MAX_SLIDE_SEC = 60.0      # 一頁最長時間，避免講者影片整支變一�
 MAX_SLIDE_CUES = 10       # 一頁最多字幕句數
 WEBP_QUALITY = 80
 THUMB_WIDTH = 320
+
+# M3 翻譯
+TRANSLATE_BATCH = 40
+TRANSLATE_CONCURRENCY = 2
+TRANSLATE_TIMEOUT_SEC = 180
+TRANSLATE_MODEL = "haiku"
+LANG_NAMES = {"zh-TW": "繁體中文（台灣用語）", "zh-CN": "简体中文", "en": "English", "ja": "日本語", "ko": "한국어"}
+# YouTube 字幕語言代碼的別名：目標語言可能以這些 key 出現在 info["subtitles"]
+LANG_ALIASES = {"zh-TW": ("zh-TW", "zh-Hant", "zh-Hant-TW", "zh-HK"), "zh-CN": ("zh-CN", "zh-Hans", "zh-Hans-CN", "zh"), "en": ("en", "en-US", "en-GB"), "ja": ("ja",), "ko": ("ko",)}
