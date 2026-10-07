@@ -1,0 +1,66 @@
+{
+ "wireMagic": "pb3",
+ "events": [
+  {
+   "tStartMs": 0,
+   "dDurationMs": 2000,
+   "segs": [
+    {
+     "utf8": "Hello everyone."
+    }
+   ]
+  },
+  {
+   "tStartMs": 2000,
+   "dDurationMs": 500
+  },
+  {
+   "tStartMs": 2500,
+   "dDurationMs": 3000,
+   "segs": [
+    {
+     "utf8": "Today we talk\nabout testing."
+    }
+   ]
+  },
+  {
+   "tStartMs": 5500,
+   "dDurationMs": 500,
+   "segs": [
+    {
+     "utf8": "\n"
+    }
+   ]
+  },
+  {
+   "tStartMs": 6000,
+   "dDurationMs": 2500,
+   "segs": [
+    {
+     "utf8": "First, "
+    },
+    {
+     "utf8": "write the test."
+    }
+   ]
+  },
+  {
+   "tStartMs": 9000,
+   "dDurationMs": 3000,
+   "segs": [
+    {
+     "utf8": "Then make it pass."
+    }
+   ]
+  },
+  {
+   "tStartMs": 12500,
+   "dDurationMs": 2000,
+   "segs": [
+    {
+     "utf8": "Thank you!"
+    }
+   ]
+  }
+ ]
+}

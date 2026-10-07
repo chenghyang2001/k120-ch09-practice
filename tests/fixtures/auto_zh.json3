@@ -1,0 +1,144 @@
+{
+ "wireMagic": "pb3",
+ "events": [
+  {
+   "tStartMs": 0,
+   "dDurationMs": 30000,
+   "id": 1,
+   "wpWinPosId": 1,
+   "wsWinStyleId": 1
+  },
+  {
+   "tStartMs": 500,
+   "dDurationMs": 2500,
+   "wWinId": 1,
+   "segs": [
+    {
+     "utf8": "今天"
+    },
+    {
+     "utf8": "我們",
+     "tOffsetMs": 250
+    },
+    {
+     "utf8": "要來",
+     "tOffsetMs": 500
+    },
+    {
+     "utf8": "介紹",
+     "tOffsetMs": 750
+    },
+    {
+     "utf8": "一個",
+     "tOffsetMs": 1000
+    },
+    {
+     "utf8": "可以",
+     "tOffsetMs": 1250
+    },
+    {
+     "utf8": "把很",
+     "tOffsetMs": 1500
+    },
+    {
+     "utf8": "長的",
+     "tOffsetMs": 1750
+    }
+   ]
+  },
+  {
+   "tStartMs": 2400,
+   "dDurationMs": 100,
+   "wWinId": 1,
+   "aAppend": 1,
+   "segs": [
+    {
+     "utf8": "\n"
+    }
+   ]
+  },
+  {
+   "tStartMs": 2500,
+   "dDurationMs": 2500,
+   "wWinId": 1,
+   "segs": [
+    {
+     "utf8": "影片"
+    },
+    {
+     "utf8": "轉換",
+     "tOffsetMs": 250
+    },
+    {
+     "utf8": "成投",
+     "tOffsetMs": 500
+    },
+    {
+     "utf8": "影片",
+     "tOffsetMs": 750
+    },
+    {
+     "utf8": "的小",
+     "tOffsetMs": 1000
+    },
+    {
+     "utf8": "工具",
+     "tOffsetMs": 1250
+    },
+    {
+     "utf8": "讓大",
+     "tOffsetMs": 1500
+    },
+    {
+     "utf8": "家不",
+     "tOffsetMs": 1750
+    }
+   ]
+  },
+  {
+   "tStartMs": 4400,
+   "dDurationMs": 100,
+   "wWinId": 1,
+   "aAppend": 1,
+   "segs": [
+    {
+     "utf8": "\n"
+    }
+   ]
+  },
+  {
+   "tStartMs": 4500,
+   "dDurationMs": 2500,
+   "wWinId": 1,
+   "segs": [
+    {
+     "utf8": "用看"
+    },
+    {
+     "utf8": "完整",
+     "tOffsetMs": 250
+    },
+    {
+     "utf8": "支影",
+     "tOffsetMs": 500
+    },
+    {
+     "utf8": "片也",
+     "tOffsetMs": 750
+    },
+    {
+     "utf8": "能快",
+     "tOffsetMs": 1000
+    },
+    {
+     "utf8": "速理",
+     "tOffsetMs": 1250
+    },
+    {
+     "utf8": "解重",
+     "tOffsetMs": 1500
+    }
+   ]
+  }
+ ]
+}
